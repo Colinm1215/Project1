@@ -22,7 +22,6 @@ int main() {
                 perror("failed");
                 exit(0);
         }
-        printf("1\n");
 
         sockfd = socket(
                         server->ai_family,
@@ -32,7 +31,6 @@ int main() {
                 perror("failed");
                 exit(0);
         }
-        printf("2\n");
 
         r = connect(sockfd,
                         server->ai_addr,
@@ -41,7 +39,13 @@ int main() {
                 perror("failed");
                 exit(1);
         }
-        printf("3\n");
 
+        printf("Sending Test Text Message to Server : Hello\n");
+
+        char buf[5] = "Hello";
+
+        int returnVal = write(sockfd, buf, sizeof(buf));
+
+        printf("Return Val %d\n", returnVal);
         freeaddrinfo(server);
 }

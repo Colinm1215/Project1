@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <errno.h>
 
 int main() {
 
@@ -23,7 +24,6 @@ int main() {
                 perror("failed");
                 exit(1);
         }
-        printf("1\n");
 
         sockfd = socket(
                         results->ai_family,
@@ -41,7 +41,6 @@ int main() {
                 perror("failed");
                 exit(0);
         }
-        printf("2\n");
 
         printf("Listening for connection...\n");
         s = listen(sockfd, 1);
@@ -50,7 +49,6 @@ int main() {
                 exit(1);
         }
 
-        printf("3\n");
         client_len = sizeof(client_addr);
 
         clientfd = accept(sockfd,
@@ -60,9 +58,21 @@ int main() {
                 perror("failed");
                 exit(1);
         }
+        printf("Connected to Client\n");
 
-        printf("4\n");
-        printf("on file descriptor %d\n", clientfd);
+        char buf[5];
+
+        memset(buf, '\0', sizeof(buf));
+
+        int returnVal = 1;
+
+        returnVal = read(clientfd, buf, 6);
+
+        if (returnVal < 0) {
+                printf("Errno : %s\n", strerror(errno));
+        }
+
+        printf("Client Message : %s\n", buf);
 
         close(clientfd);
 
@@ -71,3 +81,8 @@ int main() {
         close(sockfd);
         return(0);
 }
+
+int decode_qr(){
+
+}
+
