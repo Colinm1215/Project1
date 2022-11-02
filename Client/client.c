@@ -7,20 +7,41 @@
 
 int main() {
 
-        struct addrinfo hints, server;
-        char IP[] = "10.63.18.1";
-        char Port[] = "8066";
+        struct addrinfo hints, *server;
+        char IP[] = "0";
+        char Port[] = "2012";
         int r, sockfd;
 
-        printf("Client Starting,,,");
-        memset($hints, 0, sizeof(struct addrinfo));
+        printf("Client Starting...\n");
+        memset(&hints, 0, sizeof(struct addrinfo));
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
 
-        r = getaddrinfo( IP, Port, &hints, &server );
+        r = getaddrinfo( 0, "2012", &hints, &server);
         if ( r != 0 ) {
+                perror("failed");
+                exit(0);
+        }
+        printf("1\n");
+
+        sockfd = socket(
+                        server->ai_family,
+                        server->ai_socktype,
+                        server->ai_protocol);
+        if (sockfd == -1) {
+                perror("failed");
+                exit(0);
+        }
+        printf("2\n");
+
+        r = connect(sockfd,
+                        server->ai_addr,
+                        server->ai_addrlen);
+        if (r == -1) {
                 perror("failed");
                 exit(1);
         }
-        puts("done");
+        printf("3\n");
+
+        freeaddrinfo(server);
 }
