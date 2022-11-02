@@ -82,7 +82,11 @@ int main() {
         return(0);
 }
 
-int decode_qr(){
-
+/* going to implement the function decode_qr in server code */
+char * decode_qr(unsigned int filesize, char *file){
+        const char *cmd = "java -cp javase.jar:core.jar com.google.zxing.client.j2se.CommandLineRunner" ;
+        /* going to use str_cpy and str_cat to concatenate the image file to command */
+        url = system(cmd);
+        /* get function to grab the url from sys call */
 }
 
