@@ -1,6 +1,6 @@
 # Makefile for client
 
 all:
-        gcc client.c -o client
+	 gcc client.c -o client
 clean:
-        rm -f client
+	rm -f client
