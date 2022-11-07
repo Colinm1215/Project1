@@ -11,6 +11,7 @@
 
 sem_t log_lock;
 int stop = 0;
+int current_connections = 0;
 
 typedef struct {
 	int fd;
@@ -79,6 +80,8 @@ void *client(void *arg) {
         buffer[returnVal] = '\0';
     }
     close(clientfd);
+    current_connections--;
+    return NULL;
 }
 
 
@@ -86,7 +89,6 @@ int main() {
     const char *PORT = "2012";
     const int hostname_size = 32;
     char hostname[hostname_size];
-    int current_connections = 0;
     const int backlog = 3;
     char connections[backlog][hostname_size];
     pthread_t connection_threads[backlog];
@@ -133,6 +135,10 @@ int main() {
              exit(1);
      }
 
+    int BUFFER_SIZE = 255;
+    char buffer[BUFFER_SIZE];
+    int returnVal;
+
      while(stop == 0) {
          for( fd=1; fd<=max_connections; fd++){
              if (fd==sockfd) {
@@ -140,23 +146,29 @@ int main() {
                                    &client_addr,
                                    &client_len);
 
-                 printf("sockfd : %d, clientfd : %d\n", sockfd, clientfd);
                  if (clientfd == -1) {
                      perror("failed");
                      exit(1);
                  }
-                 current_connections++;
 
-                 int r = getnameinfo(&client_addr, client_len, hostname, hostname_size, 0, 0, NI_NUMERICHOST);
+                 if (current_connections == max_connections) {
+                     strcpy(buffer, "Error : Server Full\nDisconnecting...\n");
+                     returnVal = send(clientfd,buffer,strlen(buffer),0);
+                     close(clientfd);
+                 } else {
+                     current_connections++;
 
-                 strcpy(connections[clientfd], hostname);
-                 a[clientfd].fd = clientfd;
-                 char buf[hostname_size + 3];
-                 snprintf(buf, hostname_size + 3, "%s(%d)\0", hostname, current_connections);
-                 strcpy(a[clientfd].name, buf);
-                 pthread_create(&connection_threads[clientfd], NULL, client, &a[clientfd]);
+                     int r = getnameinfo(&client_addr, client_len, hostname, hostname_size, 0, 0, NI_NUMERICHOST);
 
-                 printf("New Connection from %s\n", a[clientfd].name);
+                     strcpy(connections[clientfd], hostname);
+                     a[clientfd].fd = clientfd;
+                     char buf[hostname_size + 3];
+                     snprintf(buf, hostname_size + 3, "%s(%d)\0", hostname, current_connections);
+                     strcpy(a[clientfd].name, buf);
+                     pthread_create(&connection_threads[clientfd], NULL, client, &a[clientfd]);
+
+                     printf("New Connection from %s\n", a[clientfd].name);
+                 }
              }
          }
      }
