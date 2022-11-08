@@ -10,6 +10,7 @@
 #include <semaphore.h>
 
 sem_t log_lock;
+sem_t connection_lock;
 int stop = 0;
 int current_connections = 0;
 
@@ -26,6 +27,49 @@ void releaseLogLock() {
 	sem_post(&log_lock);
 }
 
+void getConnectionLock() {
+    sem_wait(&log_lock);
+}
+
+void releaseConnectionLock() {
+    sem_post(&log_lock);
+}
+char* decode_qr(unsigned int filesize, char file[], char* url){
+    char cmd[] = "java -cp javase.jar:core.jar com.google.zxing.client.j2se.CommandLineRunner ";
+    strcat(cmd, file);
+
+    FILE *fp;
+    char path[1035];
+
+    fp = popen(cmd, "r");
+    if (fp == NULL) {
+        printf("Could not find or open file %s\n", file);
+    }
+
+    int parsed_result_flag = 0;
+    char *parsed_url;
+    int found_url = 0;
+    while (fgets(path, sizeof(path), fp) != NULL && found_url == 0) {
+        if (parsed_result_flag == 1) {
+            parsed_url = malloc(strlen(path));
+            strcpy(parsed_url, path);
+            printf("Found : %s\n", parsed_url);
+            found_url = 1;
+        } else {
+            if (strcmp(path, "Parsed result:\n") == 0) {
+                parsed_result_flag = 1;
+            }
+        }
+    }
+
+    if (found_url == 0) {
+        printf("Could not find URL\n");
+    }
+
+    pclose(fp);
+    return parsed_url;
+}
+
 void *client(void *arg) {
 	arg_t *args = (arg_t *) arg;
 	int clientfd = args->fd;
@@ -34,7 +78,7 @@ void *client(void *arg) {
     char buffer[BUFFER_SIZE];
     int returnVal;
     printf("Name : %s\n", name);
-    const char *welcome_msg = "Type 'close' to disconnect; 'shutdown' to stop\n";
+    const char *welcome_msg = "Type 'close' to disconnect\n";
 
     strcpy(buffer,"Hello to ");
     strcat(buffer,name);
@@ -67,7 +111,6 @@ void *client(void *arg) {
                 printf("Errno from connection with client %s : %s\n", name, strerror(errno));
             }
 
-
             done = 1;
         } else {
             printf("Recieved from client %s : %s", name, buffer);
@@ -80,12 +123,16 @@ void *client(void *arg) {
         buffer[returnVal] = '\0';
     }
     close(clientfd);
+    getConnectionLock();
     current_connections--;
+    releaseConnectionLock();
     return NULL;
 }
 
-
 int main() {
+
+    sem_init(&connection_lock, 0, 1);
+    sem_init(&log_lock, 0, 1);
     const char *PORT = "2012";
     const int hostname_size = 32;
     char hostname[hostname_size];
@@ -128,7 +175,7 @@ int main() {
              exit(0);
      }
 
-     printf("Listening for connection...\n");
+     printf("Listening for connections...\n");
      s = listen(sockfd, 1);
      if (s == -1) {
              perror("failed");
@@ -142,6 +189,7 @@ int main() {
      while(stop == 0) {
          for( fd=1; fd<=max_connections; fd++){
              if (fd==sockfd) {
+                 getConnectionLock();
                  clientfd = accept(sockfd,
                                    &client_addr,
                                    &client_len);
@@ -169,6 +217,7 @@ int main() {
 
                      printf("New Connection from %s\n", a[clientfd].name);
                  }
+                 releaseConnectionLock();
              }
          }
      }
@@ -176,17 +225,9 @@ int main() {
      for (int fd = 1; fd <= max_connections; fd++) {
          close(fd);
      }
+
     close(sockfd);
     freeaddrinfo(results);
 
-    close(sockfd);
     return(0);
-}
-
-/* going to implement the function decode_qr in server code */
-char * decode_qr(unsigned int filesize, char *file){
-        const char *cmd = "java -cp javase.jar:core.jar com.google.zxing.client.j2se.CommandLineRunner" ;
-        /* going to use str_cpy and str_cat to concatenate the image file to command
-        url = system(cmd);
-         get function to grab the url from sys call */
 }
