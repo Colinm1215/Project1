@@ -7,8 +7,15 @@ Cited Resources:
 - https://man7.org/linux/man-pages/man3/system.3.html
 - https://aticleworld.com/socket-programming-in-c-using-tcpip/#:~:text=Create%20a%20socket%20with%20the,calling%20the%20close()%20function.
 - https://man7.org/linux/man-pages/man3/getaddrinfo.3.html
+- https://idiotdeveloper.com/file-transfer-using-tcp-socket-in-c/
+- 
 
 Server:
 
 
 Client:
+
+To run the client.c file, first use the 'make all' command to make the file.
+Then, run the command './client [IP] [Port]', including the IP address and
+Port as arguments separated by a space (**Please make sure to put them
+in this order, IP then Port, to be able to run the client**).
