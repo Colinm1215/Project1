@@ -8,23 +8,34 @@
 #include <errno.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <stdint.h>
+
+#define SUCCESS 0
+#define FAILURE 1
+#define TIMEOUT 2
+#define RATEEXCEED 3
+#define MAX_SIZE_FILE 4000
 
 sem_t log_lock;
 sem_t connection_lock;
 int stop = 0;
+int server_shutdown = 0;
 int current_connections = 0;
 
 typedef struct {
-	int fd;
-	char name[];
+    int fd;
+    struct timeval tv;
+    int num_reqs;
+    int per_sec;
+    char name[];
 } arg_t;
 
 void getLogLock() {
-	sem_wait(&log_lock);
+    sem_wait(&log_lock);
 }
 
 void releaseLogLock() {
-	sem_post(&log_lock);
+    sem_post(&log_lock);
 }
 
 void getConnectionLock() {
@@ -34,7 +45,8 @@ void getConnectionLock() {
 void releaseConnectionLock() {
     sem_post(&log_lock);
 }
-char* decode_qr(unsigned int filesize, char file[], char* url){
+
+char *decode_qr(unsigned int filesize, char file[], int *returnValue) {
     char cmd[] = "java -cp javase.jar:core.jar com.google.zxing.client.j2se.CommandLineRunner ";
     strcat(cmd, file);
 
@@ -53,7 +65,6 @@ char* decode_qr(unsigned int filesize, char file[], char* url){
         if (parsed_result_flag == 1) {
             parsed_url = malloc(strlen(path));
             strcpy(parsed_url, path);
-            printf("Found : %s\n", parsed_url);
             found_url = 1;
         } else {
             if (strcmp(path, "Parsed result:\n") == 0) {
@@ -64,85 +75,209 @@ char* decode_qr(unsigned int filesize, char file[], char* url){
 
     if (found_url == 0) {
         printf("Could not find URL\n");
+        *returnValue = FAILURE;
     }
 
     pclose(fp);
     return parsed_url;
 }
 
+void write_file(int sockfd, long SIZE){
+    int n;
+    FILE *fp;
+    char *filename = "tmp.png";
+    char buffer[SIZE];
+
+    fp = fopen(filename, "w");
+    while (1) {
+        n = recv(sockfd, buffer, SIZE, 0);
+        printf("Curr Size %ld : read %d\n", sizeof(buffer), n);
+        if (n <= 0){
+            break;
+        }
+        fwrite(buffer, sizeof(buffer), 1,fp);
+        bzero(buffer, SIZE);
+    }
+    fclose(fp);
+    return;
+}
+
 void *client(void *arg) {
-	arg_t *args = (arg_t *) arg;
-	int clientfd = args->fd;
+
+    arg_t *args = (arg_t *) arg;
+    int myfd = args->fd;
     char *name = args->name;
+    time_t num_requests_in_time[args->num_reqs];
+    memset(&num_requests_in_time, 0, args->num_reqs);
     int BUFFER_SIZE = 255;
     char buffer[BUFFER_SIZE];
     int returnVal;
-    printf("Name : %s\n", name);
     const char *welcome_msg = "Type 'close' to disconnect\n";
-
-    strcpy(buffer,"Hello to ");
-    strcat(buffer,name);
-    strcat(buffer,"!\n");
-    strcat(buffer,welcome_msg);
-    returnVal = send(clientfd,buffer,strlen(buffer),0);
-    buffer[returnVal] = '\0';
-    if (returnVal < 0) {
-        printf("Errno from connection with client %s : %s\n", name, strerror(errno));
-    }
-
     int done = 0;
 
-    while (done == 0) {
-        returnVal = recv(clientfd, buffer, BUFFER_SIZE,0);
-        buffer[returnVal] = '\0';
-        if (returnVal < 0) {
-            printf("Errno from connection with client %s : %s\n", name, strerror(errno));
-        }
-        if( strcmp(buffer,"close\n")==0 || returnVal<1) {
-            if (returnVal >= 1) {
-                printf("Recieved from client %s : %s", name, buffer);
-            } else {
-                printf("Nothing recieved from client %s\n", name);
-            }
-            printf("Closing Connection to %s...\n", name);
-            returnVal = send(clientfd,"Closing Connection...",21,0);
+    strcpy(buffer, "Hello to ");
+    strcat(buffer, name);
+    strcat(buffer, "!\n");
+    strcat(buffer, welcome_msg);
+    returnVal = send(myfd, buffer, strlen(buffer), 0);
 
-            if (returnVal < 0) {
-                printf("Errno from connection with client %s : %s\n", name, strerror(errno));
-            }
-
-            done = 1;
-        } else {
-            printf("Recieved from client %s : %s", name, buffer);
-            returnVal = send(clientfd,buffer,strlen(buffer),0);
-
-            if (returnVal < 0) {
-                printf("Errno from connection with client %s : %s\n", name, strerror(errno));
-            }
-        }
-        buffer[returnVal] = '\0';
+    if (returnVal < 0) {
+        printf("Errno from connection with client %s : %s\n", name, strerror(errno));
+        done = 1;
     }
-    close(clientfd);
+
+    fd_set main_set, working_set;
+    FD_ZERO(&main_set);
+    FD_SET(myfd, &main_set);
+
+    int processing_file = 0;
+    int file_size = 0;
+    char file_buffer[MAX_SIZE_FILE];
+    int bytes_read_so_far = 0;
+    int oversize_flag = 0;
+    int file_downloaded_flag = 0;
+
+    while (done == 0) {
+        memset(buffer, 0, BUFFER_SIZE);
+
+        if (stop == 1) {
+            char *msg = "Server shutdown!\nClosing Connection...\n";
+            returnVal = send(myfd, msg, strlen(msg), 0);
+            break;
+        }
+
+        struct timeval tv;
+        tv.tv_sec = args->tv.tv_sec;
+        tv.tv_usec = args->tv.tv_usec;
+
+        working_set = main_set;
+
+        int selectVal = select(myfd + 1, &working_set, NULL, NULL, &tv);
+
+        if (selectVal == 1) {
+           if (FD_ISSET(myfd, &working_set)) {
+                returnVal = recv(myfd, buffer, BUFFER_SIZE, 0);
+               if (returnVal < 0) {
+                   printf("Errno from connection with client %s : %s\n", name, strerror(errno));
+                   continue;
+               }
+
+
+
+                buffer[returnVal] = '\0';
+
+                if (strcmp(buffer, "close") == 0 || returnVal < 1) {
+                    if (returnVal >= 1) {
+                        printf("Received from client %s : %s", name, buffer);
+                    } else {
+                        printf("Nothing received from client %s\n", name);
+                    }
+                    printf("Closing Connection to %s...\n", name);
+                    returnVal = send(myfd, "Closing Connection...\n", 21, 0);
+
+                    if (returnVal < 0) {
+                        printf("Errno from connection with client %s : %s\n", name, strerror(errno));
+                    }
+
+                    done = 1;
+                } else if( strcmp(buffer,"shutdown")==0 ) {
+                        printf("Shutdown command received from %s.\nClosing all connections...", name);
+                        char *msg = "Shutdown command received.\nClosing Connection...\n";
+                        returnVal = send(myfd, msg, strlen(msg), 0);
+
+                        if (returnVal < 0) {
+                            printf("Errno from connection with client %s : %s\n", name, strerror(errno));
+                        }
+                        stop = 1;
+                        done = 1;
+                } else {
+                    char *err_str;
+                    long t_file_size = strtol(buffer, &err_str, 10);
+                    if (t_file_size > 0 && strcmp(err_str, "") == 0) {
+                        file_size = (int) t_file_size;
+                        processing_file = 1;
+                        char *return_msg = "Downloading file!\n";
+                        returnVal = send(myfd, return_msg, strlen(return_msg), 0);
+                        write_file(myfd, file_size);
+                    } else {
+                        printf("File Download Error\n");
+                    }
+                }
+            }
+        } else if (selectVal == -1) {
+            printf("bob\n");
+        } else {
+            printf("Client %s idle for %ld seconds, timeout occurred.\nClosing Connection...\n", name, args->tv.tv_sec);
+            char *timeout_msg = "Client idle for too long, timeout occurred.\nClosing Connection...\n";
+            returnVal = send(myfd, timeout_msg, strlen(timeout_msg), 0);
+            if (returnVal < 0) {
+                printf("Errno from connection with client %s : %s\n", name, strerror(errno));
+            }
+            done = 1;
+        }
+    }
+
+    close(myfd);
     getConnectionLock();
     current_connections--;
     releaseConnectionLock();
     return NULL;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+
+    const char *arg_err = "Usage: %s [-p port] [-t timeout(s)] [-m max_users] [-r number_of_requests] [-s rate_of_requests(s)]\n";
+
+    int max_connections = 3;
+    int max_requests_per_user = 3;
+    int max_requests_per_user_per_second = 60;
+    char *PORT = "2012";
+    int timeout_time = 80;
+    int opt;
+
+    int rate_flag = 0;
+
+    while ((opt = getopt(argc, argv, "t:p:m:r:s:")) != -1) {
+        switch (opt) {
+            case 'p':
+                PORT = optarg;
+                break;
+            case 't':
+                timeout_time = atoi(optarg);
+                break;
+            case 'm':
+                max_connections = atoi(optarg);
+                break;
+            case 'r':
+                max_requests_per_user = atoi(optarg);
+                rate_flag++;
+                break;
+            case 's':
+                max_requests_per_user_per_second = atoi(optarg);
+                rate_flag++;
+                break;
+            default:
+                fprintf(stderr, arg_err,
+                        argv[0]);
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    if (rate_flag != 2 && rate_flag != 0) {
+        fprintf(stderr, arg_err,
+                argv[0]);
+        exit(EXIT_FAILURE);
+    }
 
     sem_init(&connection_lock, 0, 1);
     sem_init(&log_lock, 0, 1);
-    const char *PORT = "2012";
     const int hostname_size = 32;
     char hostname[hostname_size];
-    const int backlog = 3;
-    char connections[backlog][hostname_size];
-    pthread_t connection_threads[backlog];
-    arg_t a[backlog];
+    char connections[max_connections][hostname_size];
+    pthread_t connection_threads[max_connections];
+    arg_t a[max_connections];
     struct addrinfo hints, *results;
     int s, sockfd, clientfd, fd;
-    int max_connections = backlog;
     struct sockaddr client_addr;
     socklen_t client_len = sizeof(struct sockaddr);
 
@@ -152,82 +287,124 @@ int main() {
     hints.ai_flags = AI_PASSIVE;
 
     printf("Starting Server...\n");
-    s = getaddrinfo( 0, PORT, &hints, &results);
-    if ( s != 0 ) {
-            perror("failed");
-            exit(1);
+    s = getaddrinfo(0, PORT, &hints, &results);
+    if (s != 0) {
+        perror("failed");
+        exit(1);
     }
 
-     sockfd = socket(
-                     results->ai_family,
-                     results->ai_socktype,
-                     results->ai_protocol);
-     if (sockfd == -1) {
-             perror("failed");
-             exit(1);
-     }
+    sockfd = socket(
+            results->ai_family,
+            results->ai_socktype,
+            results->ai_protocol);
+    if (sockfd == -1) {
+        perror("failed");
+        exit(1);
+    }
 
-     s = bind(sockfd,
-                     results->ai_addr,
-                     results->ai_addrlen);
-     if (s == -1) {
-             perror("failed");
-             exit(0);
-     }
+    s = bind(sockfd,
+             results->ai_addr,
+             results->ai_addrlen);
+    if (s == -1) {
+        perror("failed");
+        exit(0);
+    }
 
-     printf("Listening for connections...\n");
-     s = listen(sockfd, 1);
-     if (s == -1) {
-             perror("failed");
-             exit(1);
-     }
+    printf("Listening for connections...\n");
+    s = listen(sockfd, max_connections);
+    if (s == -1) {
+        perror("failed");
+        exit(1);
+    }
 
     int BUFFER_SIZE = 255;
     char buffer[BUFFER_SIZE];
     int returnVal;
+    fd_set main_fd, read_fd;
 
-     while(stop == 0) {
-         for( fd=1; fd<=max_connections; fd++){
-             if (fd==sockfd) {
-                 getConnectionLock();
-                 clientfd = accept(sockfd,
-                                   &client_addr,
-                                   &client_len);
+    FD_ZERO(&main_fd);
+    FD_SET(sockfd, &main_fd);
 
-                 if (clientfd == -1) {
-                     perror("failed");
-                     exit(1);
-                 }
+    while (stop == 0) {
+        read_fd = main_fd;
 
-                 if (current_connections == max_connections) {
-                     strcpy(buffer, "Error : Server Full\nDisconnecting...\n");
-                     returnVal = send(clientfd,buffer,strlen(buffer),0);
-                     close(clientfd);
-                 } else {
-                     current_connections++;
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
 
-                     int r = getnameinfo(&client_addr, client_len, hostname, hostname_size, 0, 0, NI_NUMERICHOST);
+        int selectVal = select(sockfd + 1, &read_fd, NULL, NULL, &tv);
 
-                     strcpy(connections[clientfd], hostname);
-                     a[clientfd].fd = clientfd;
-                     char buf[hostname_size + 3];
-                     snprintf(buf, hostname_size + 3, "%s(%d)\0", hostname, current_connections);
-                     strcpy(a[clientfd].name, buf);
-                     pthread_create(&connection_threads[clientfd], NULL, client, &a[clientfd]);
+        if (FD_ISSET(sockfd, &read_fd) && selectVal == 1) {
+            printf("Searching for new connections...\n");
+            int clientfd = accept(
+                    sockfd,
+                    (struct sockaddr *)&client_addr,
+                    &client_len
+            );
 
-                     printf("New Connection from %s\n", a[clientfd].name);
-                 }
-                 releaseConnectionLock();
-             }
-         }
-     }
+            if (clientfd == -1) {
+                perror("failed");
+                exit(1);
+            }
 
-     for (int fd = 1; fd <= max_connections; fd++) {
-         close(fd);
-     }
+            int r = getnameinfo(
+                    (struct sockaddr *)&client_addr,
+                    client_len,
+                    hostname,
+                    hostname_size,
+                    0,
+                    0,
+                    NI_NUMERICHOST
+            );
+
+            if (returnVal < 0) {
+                printf("Errno from connection with client %s : %s\n", hostname, strerror(errno));
+            }
+
+            getConnectionLock();
+            if (current_connections == max_connections) {
+                releaseConnectionLock();
+                strcpy(buffer, "Error : Server Full\nDisconnecting...\n");
+                returnVal = send(clientfd, buffer, strlen(buffer), 0);
+
+                if (returnVal < 0) {
+                    printf("Errno from connection with client %s : %s\n", hostname, strerror(errno));
+                }
+                close(clientfd);
+            } else {
+                current_connections++;
+                releaseConnectionLock();
+
+                int index = clientfd-sockfd-1;
+                printf("IND : %d\n", index);
+
+                strcpy(connections[index],hostname);
+                a[index].fd = clientfd;
+                a[index].tv.tv_sec = timeout_time;
+                a[index].tv.tv_usec = 0;
+                a[index].num_reqs = max_requests_per_user;
+                a[index].per_sec = max_requests_per_user_per_second;
+                strcpy(a[index].name, hostname);
+                pthread_create(&connection_threads[index], NULL, client, &a[index]);
+
+                printf("New Connection from %s\n", a[index].name);
+
+            }
+        } else if (selectVal == -1) {
+            perror("failed");
+            exit(1);
+        }
+    }
+    FD_CLR(sockfd, &main_fd);
+    FD_CLR(sockfd, &read_fd);
+
+    printf("Shutting down server\n");
+    printf("Waiting for all clients to disconnect\n");
+    while (current_connections > 0) {}
+    printf("All clients disconnected, goodbye\n");
 
     close(sockfd);
     freeaddrinfo(results);
 
-    return(0);
+    return (0);
 }
