@@ -21,6 +21,23 @@ void sendFile(FILE *file, int sockfd){
 	}
 }
 
+// getSize calculates size of file being sent
+unsigned long int getSize(char filename[]){
+	
+	FILE* file = fopen(filename, "r");
+	
+	// check file
+	if (file == NULL) {
+        printf("Cannot find file specified.\n");
+        return -1;
+    	}
+
+	fseek(file, 0L, SEEK_END);
+	unsigned long int size = ftell(file);
+	fclose(file);
+}
+
+
 int main(int argc, char *argv[]) {
 
 	char ip[20];
