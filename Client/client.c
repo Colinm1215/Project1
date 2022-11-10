@@ -1,28 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #define SIZE 1024
 
-// sendFile is used to parse through the data contained in the loaded file
-// to send to the server -- it reads it in segments
-void sendFile(FILE *file, int sockfd){
-
-	char data_segment[SIZE] = "";
-
-	while(fgets(data_segment, SIZE, file) != NULL){
-		if(send(sockfd, data_segment, sizeof(data_segment), 0) == -1){
-			perror("Error: unable to send file.");
-			exit(1);
-		}
-		bzero(data_segment, SIZE);
-	}
-}
-
 // getSize calculates size of file being sent
-unsigned long int getSize(char filename[]){
+long int getSize(char filename[]){
 	
 	FILE* file = fopen(filename, "r");
 	
@@ -33,10 +19,45 @@ unsigned long int getSize(char filename[]){
     	}
 
 	fseek(file, 0L, SEEK_END);
-	unsigned long int size = ftell(file);
+	long int size = ftell(file);
 	fclose(file);
+	
+	return(size);
 }
 
+// sendFile is used to parse through the data contained in the loaded file
+// to send to the server -- it reads it in segments
+void sendFile(char filename[], int sockfd){
+
+	FILE* qr_file = NULL;
+	long int size = getSize(filename);
+	char data_segment[size];
+	memset(data_segment, 0, size);
+	
+	qr_file = fopen(filename,"r");
+	
+	if(qr_file==NULL){
+		printf("File not found.");
+		exit(1);
+	}
+
+	printf("File opened: %s\n\n", filename);
+
+	int r = 1;
+
+	printf("Sending '%s' File to Server...\n",filename);
+	
+    	while((r = fread(data_segment, size, 1, qr_file)) == 1) {
+        	if (send(sockfd, data_segment, sizeof(data_segment), 0) == -1) {
+            	perror("Error in sending file.");
+            	exit(1);
+        	}
+        	bzero(data_segment, SIZE);
+    	}
+    	
+	fclose(qr_file);
+    	
+}
 
 int main(int argc, char *argv[]) {
 
@@ -59,7 +80,6 @@ int main(int argc, char *argv[]) {
 	struct addrinfo hints, *server;
 	int r, sockfd;
 	
-	FILE* qr_file = NULL;
 	char buffer[50] = "";
 	
 	printf("Client Starting...\n");
@@ -90,24 +110,69 @@ int main(int argc, char *argv[]) {
 		exit(1);
 	}
 
-	printf("Enter a file to be decoded by the server: \n");
-	scanf("%s",buffer);
+	char buffy[50] = "";
+
+	int returnVal = recv(sockfd, buffy, 50, 0);
+    	buffy[returnVal] = '\0';
+    	printf("%s\n", buffy);
 	
-	qr_file = fopen(buffer,"r");
+	while(1){
 	
-	if(qr_file==NULL){
-		printf("File not found.");
-		exit(1);
+		printf("Enter a file to be decoded by the server: \n");
+		scanf("%s",buffer);
+		
+		// if client wants to close connection
+		if (strcmp(buffer, "close") == 0) {
+            		puts("Closing connection...");
+            		returnVal = send(sockfd, buffer, strlen(buffer), 0);
+            		if (returnVal < 0) {
+                		printf("Errno from connection with server: %s\n", strerror(errno));
+            		}
+            		break;
+        	}
+        	
+        	// if client wants to shut down the server
+        	if (strcmp(buffer, "shutdown") == 0) {
+            		puts("Shutting down server...");
+            		returnVal = send(sockfd, buffer, strlen(buffer), 0);
+            		if (returnVal < 0) {
+                		printf("Errno from connection with server: %s\n", strerror(errno));
+            		}
+            		break;
+        	}
+	
+		// get file size
+		long int file_size_int = getSize(buffer);
+		printf("File size: %ld\n", file_size_int);
+	
+		// convert file size to char arr
+		char size_buffer[10] = "";
+		sprintf(size_buffer,"%ld", file_size_int);
+	
+		// send file size to server
+		if (send(sockfd, size_buffer, sizeof(size_buffer), 0) == -1) {
+            		perror("Error in sending file.");
+            		exit(1);
+        	}
+        
+        	int returnVal = 0;
+        	char msg_buffer[100] = "";
+        
+        	// check that server received file size
+    		returnVal = recv(sockfd, msg_buffer, 100, 0);
+    		printf("%s\n", msg_buffer);
+
+		char msg_cmp[100] = "Downloading file!\n";
+	
+		if(strcmp(msg_buffer,msg_cmp) == 0){
+			sendFile(buffer, sockfd);
+			printf("File has been sent successfully!\n\n");
+		} else {
+			printf("Aborting file send.\n");
+		}
+		
 	}
 
-	printf("File opened: %s\n\n", buffer);
-
-	printf("Sending '%s' File to Server...\n",buffer);
-	
-	sendFile(qr_file, sockfd);
-	printf("File has been sent successfully!\n");
-
-	fclose(qr_file);
 
 
 /*
@@ -119,6 +184,10 @@ int main(int argc, char *argv[]) {
 
 	printf("Return Val %d\n", returnVal);
 */
+	
+	// close socket
+	close(sockfd);
+	
 	freeaddrinfo(server);
 
 }

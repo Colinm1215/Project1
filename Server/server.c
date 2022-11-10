@@ -89,14 +89,23 @@ void write_file(int sockfd, long SIZE){
     char buffer[SIZE];
 
     fp = fopen(filename, "w");
+    
+    int sum = 0;
+    
     while (1) {
         n = recv(sockfd, buffer, SIZE, 0);
+        sum += n;
+        
         printf("Curr Size %ld : read %d\n", sizeof(buffer), n);
         if (n <= 0){
             break;
         }
         fwrite(buffer, sizeof(buffer), 1,fp);
         bzero(buffer, SIZE);
+        
+        if(sum == SIZE){
+        	break;
+        }
     }
     fclose(fp);
     return;
@@ -244,6 +253,8 @@ void *client(void *arg) {
                         write_file(myfd, file_size);
                     } else {
                         printf("File Download Error\n");
+                        char *return_msg = "File Download Error\n";
+                        returnVal = send(myfd, return_msg, strlen(return_msg), 0);
                     }
                 }
             }
