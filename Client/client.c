@@ -6,21 +6,6 @@
 #include <netdb.h>
 #define SIZE 1024
 
-// sendFile is used to parse through the data contained in the loaded file
-// to send to the server -- it reads it in segments
-void sendFile(FILE *file, int sockfd){
-
-	char data_segment[SIZE] = "";
-
-	while(fgets(data_segment, SIZE, file) != NULL){
-		if(send(sockfd, data_segment, sizeof(data_segment), 0) == -1){
-			perror("Error: unable to send file.");
-			exit(1);
-		}
-		bzero(data_segment, SIZE);
-	}
-}
-
 // getSize calculates size of file being sent
 unsigned long int getSize(char filename[]){
 	
@@ -37,6 +22,39 @@ unsigned long int getSize(char filename[]){
 	fclose(file);
 }
 
+// sendFile is used to parse through the data contained in the loaded file
+// to send to the server -- it reads it in segments
+void sendFile(char filename[], int sockfd){
+
+	FILE* qr_file = NULL;
+	unsigned long int size = getSize(filename);
+	char data_segment[size];
+	memset(data_segment, 0, size);
+	
+	qr_file = fopen(filename,"r");
+	
+	if(qr_file==NULL){
+		printf("File not found.");
+		exit(1);
+	}
+
+	printf("File opened: %s\n\n", filename);
+
+	int r = 1;
+
+	printf("Sending '%s' File to Server...\n",filename);
+	
+    	while((r = fread(data_segment, size, 1, qr_file)) == 1) {
+        	if (send(sockfd, data_segment, sizeof(data_segment), 0) == -1) {
+            	perror("Error in sending file.");
+            	exit(1);
+        	}
+        	bzero(data_segment, SIZE);
+    	}
+    	
+	fclose(qr_file);
+    	
+}
 
 int main(int argc, char *argv[]) {
 
@@ -59,7 +77,6 @@ int main(int argc, char *argv[]) {
 	struct addrinfo hints, *server;
 	int r, sockfd;
 	
-	FILE* qr_file = NULL;
 	char buffer[50] = "";
 	
 	printf("Client Starting...\n");
@@ -93,21 +110,36 @@ int main(int argc, char *argv[]) {
 	printf("Enter a file to be decoded by the server: \n");
 	scanf("%s",buffer);
 	
-	qr_file = fopen(buffer,"r");
+	// get file size
+	unsigned long int file_size_int = getSize(buffer);
+	printf("File size: %ld/n", file_size_int);
 	
-	if(qr_file==NULL){
-		printf("File not found.");
-		exit(1);
+	// convert file size to char arr
+	char size_buffer[10] = "";
+	sprintf(size_buffer,"%ld", file_size_int);
+	
+	// send file size to server
+	if (send(sockfd, size_buffer, sizeof(size_buffer), 0) == -1) {
+            	perror("Error in sending file.");
+            	exit(1);
+        }
+        
+        int returnVal = 0;
+        char msg_buffer[100] = "";
+        
+        // check that server received file size
+    	returnVal = recv(sockfd, msg_buffer, 100, 0);
+    	printf("%s\n", msg_buffer);
+
+	char msg_cmp[100] = "Downloading file!\n";
+	
+	if(strcmp(msg_buffer,msg_cmp) == 0){
+		sendFile(buffer, sockfd);
+		printf("File has been sent successfully!\n");
+	} else {
+		printf("Aborting file send.");
 	}
 
-	printf("File opened: %s\n\n", buffer);
-
-	printf("Sending '%s' File to Server...\n",buffer);
-	
-	sendFile(qr_file, sockfd);
-	printf("File has been sent successfully!\n");
-
-	fclose(qr_file);
 
 
 /*

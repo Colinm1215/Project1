@@ -1,6 +1,6 @@
 # Makefile for server
 
 all:
-	gcc server.c -o server
+	gcc -pthread server.c -o server
 clean:
 	rm -f server
