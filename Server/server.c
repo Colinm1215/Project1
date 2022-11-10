@@ -102,13 +102,53 @@ void write_file(int sockfd, long SIZE){
     return;
 }
 
+int eval_req(int num_reqs_per_time, int time_limit, time_t *prev_req_arr) {
+    int eval = 0;
+    time_t cur_time;
+    time_t temp_array[num_reqs_per_time];
+    memcpy(&temp_array, prev_req_arr, sizeof(time_t)*num_reqs_per_time+1);
+    time(&cur_time);
+
+    int i;
+    for (i = 0; i < num_reqs_per_time; i++) {
+        if (temp_array[i] == 0) break;
+    }
+
+    if (i < num_reqs_per_time) {
+        temp_array[i] = cur_time;
+        eval = 1;
+    } else {
+        time_t since_oldest = cur_time - temp_array[0];
+
+        printf("%ld - %ld = oldest at %ld compared to limit %d\n", cur_time, temp_array[0], since_oldest, time_limit);
+
+        if (since_oldest > time_limit) {
+            eval = 1;
+        } else {
+            for (int j = 0; j < num_reqs_per_time; j++) {
+                if (j < num_reqs_per_time-1) {
+                    temp_array[j] = temp_array[j + 1];
+                } else {
+                    temp_array[j] = cur_time;
+                }
+            }
+        }
+    }
+
+    printf("%d : Eval \n", eval);
+
+    memcpy(prev_req_arr, &temp_array, sizeof(time_t)*num_reqs_per_time+1);
+
+    return eval;
+}
+
 void *client(void *arg) {
 
     arg_t *args = (arg_t *) arg;
     int myfd = args->fd;
     char *name = args->name;
     time_t num_requests_in_time[args->num_reqs];
-    memset(&num_requests_in_time, 0, args->num_reqs);
+    memset(num_requests_in_time, 0, sizeof(time_t)*args->num_reqs);
     int BUFFER_SIZE = 255;
     char buffer[BUFFER_SIZE];
     int returnVal;
@@ -162,7 +202,11 @@ void *client(void *arg) {
                    continue;
                }
 
-
+               if (eval_req(args->num_reqs, args->per_sec, num_requests_in_time) == 0) {
+                   char *decline_msg = "Too many requests!\nMaximum of %d requests per user per %d seconds!\n";
+                   send(myfd, decline_msg, strlen(decline_msg), 0);
+                   continue;
+               }
 
                 buffer[returnVal] = '\0';
 
@@ -192,9 +236,8 @@ void *client(void *arg) {
                         done = 1;
                 } else {
                     char *err_str;
-                    long t_file_size = strtol(buffer, &err_str, 10);
-                    if (t_file_size > 0 && strcmp(err_str, "") == 0) {
-                        file_size = (int) t_file_size;
+                    long file_size = strtol(buffer, &err_str, 10);
+                    if (file_size > 0 && strcmp(err_str, "") == 0) {
                         processing_file = 1;
                         char *return_msg = "Downloading file!\n";
                         returnVal = send(myfd, return_msg, strlen(return_msg), 0);
