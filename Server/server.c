@@ -111,33 +111,64 @@ char *decode_qr(unsigned int filesize, char file[], int *returnValue) {
     return parsed_url;
 }
 
-void write_file(int sockfd, long SIZE){
+char *process_file(int sockfd, long SIZE, int initSec){
     int n;
     FILE *fp;
     char *filename = "tmp.png";
     char buffer[SIZE];
 
     fp = fopen(filename, "w");
-    
-    int sum = 0;
-    
-    while (1) {
-        n = recv(sockfd, buffer, SIZE, 0);
-        sum += n;
-        
-        printf("Curr Size %ld : read %d\n", sizeof(buffer), n);
-        if (n <= 0){
-            break;
-        }
-        fwrite(buffer, sizeof(buffer), 1,fp);
-        bzero(buffer, SIZE);
-        
-        if(sum == SIZE){
-        	break;
+
+    fd_set main_set, working_set;
+    FD_ZERO(&main_set);
+    FD_SET(sockfd, &main_set);
+
+    int bytes_remaining = SIZE;
+
+    struct timeval tv;
+    tv.tv_sec = initSec;
+    tv.tv_usec = 0;
+
+    working_set = main_set;
+
+    int selectVal = select(sockfd + 1, &working_set, NULL, NULL, &tv);
+
+    if (FD_ISSET(sockfd, &working_set)) {
+
+        while (1) {
+
+            tv.tv_sec = 0;
+            tv.tv_usec = 0;
+
+            working_set = main_set;
+
+            int selectVal = select(sockfd + 1, &working_set, NULL, NULL, &tv);
+
+            if (selectVal <= 0) break;
+
+            if (FD_ISSET(sockfd, &working_set)) {
+
+                if (bytes_remaining > 0) {
+
+                    n = recv(sockfd, buffer, bytes_remaining, 0);
+
+                    bytes_remaining -= n;
+
+                    fwrite(buffer, sizeof(buffer), 1, fp);
+                } else {
+                    if (selectVal > 0) {
+                        n = recv(sockfd, buffer, SIZE, 0);
+                    }
+                }
+                bzero(buffer, SIZE);
+            } else {
+                break;
+            }
         }
     }
+    FD_CLR(sockfd, &main_set);
     fclose(fp);
-    return;
+    return filename;
 }
 
 int eval_req(int num_reqs_per_time, int time_limit, time_t *prev_req_arr) {
@@ -158,8 +189,6 @@ int eval_req(int num_reqs_per_time, int time_limit, time_t *prev_req_arr) {
     } else {
         time_t since_oldest = cur_time - temp_array[0];
 
-        printf("%ld - %ld = oldest at %ld compared to limit %d\n", cur_time, temp_array[0], since_oldest, time_limit);
-
         if (since_oldest > time_limit) {
             eval = 1;
         } else {
@@ -172,8 +201,6 @@ int eval_req(int num_reqs_per_time, int time_limit, time_t *prev_req_arr) {
             }
         }
     }
-
-    printf("%d : Eval \n", eval);
 
     memcpy(prev_req_arr, &temp_array, sizeof(time_t)*num_reqs_per_time+1);
 
@@ -190,7 +217,7 @@ void *client(void *arg) {
     int BUFFER_SIZE = 255;
     char buffer[BUFFER_SIZE];
     int returnVal;
-    const char *welcome_msg = "Type 'close' to disconnect\n";
+    const char *welcome_msg = "Type 'close' to disconnect\nType 'shutdown' to shutdown the server\n";
     int done = 0;
 
     strcpy(buffer, "Hello to ");
@@ -234,7 +261,7 @@ void *client(void *arg) {
         int selectVal = select(myfd + 1, &working_set, NULL, NULL, &tv);
 
         if (selectVal == 1) {
-           if (FD_ISSET(myfd, &working_set)) {
+            if (FD_ISSET(myfd, &working_set)) {
                 returnVal = recv(myfd, buffer, BUFFER_SIZE, 0);
                if (returnVal < 0) {
                    printf("Errno from connection with client %s : %s\n", name, strerror(errno));
@@ -286,17 +313,29 @@ void *client(void *arg) {
                     char *err_str;
                     long file_size = strtol(buffer, &err_str, 10);
                     if (file_size > 0 && strcmp(err_str, "") == 0) {
-                    	if(file_size <= MAX_SIZE_FILE){                    	
-                       processing_file = 1;
-                       char *return_msg = "Downloading file!\n";
-                       logger("Server has successfully downloaded file from client connection.",name);
-                       returnVal = send(myfd, return_msg, strlen(return_msg), 0);
-                       write_file(myfd, file_size);
-                       } else if(file_size > MAX_SIZE_FILE){
-                       	printf("Max File Size Exceeded. Please try again.\n");
-                       	logger("Max file size has been exceeded, file not accepted by server.",name);
-                        	char *return_msg = "Max File Size Exceeded. Please try again.\n";
-                        	returnVal = send(myfd, return_msg, strlen(return_msg), 0);
+                        if(file_size <= MAX_SIZE_FILE){
+                            processing_file = 1;
+                            char *return_msg = "Downloading file!\n";
+                            logger("Server has successfully downloaded file from client connection.",name);
+                            returnVal = send(myfd, return_msg, strlen(return_msg), 0);
+                            printf("Downloading file of size %ld from client %s\n", file_size, name);
+                            char *tmp_filename = process_file(myfd, file_size, args->tv.tv_sec);
+                            int val = 0;
+                            printf("Processing file from %s\n", name);
+                            char *url = decode_qr(file_size, tmp_filename, &val);
+                            printf("Sending processed URL %s to client %s\n", url, name);
+                            char val_buf[10] = "";
+                            sprintf(val_buf,"%d", val);
+                            char sz_buf[100] = "";
+                            sprintf(sz_buf,"%d", strlen(url));
+                            returnVal = send(myfd, val_buf, 10, 0);
+                            returnVal = send(myfd, sz_buf, 100, 0);
+                            returnVal = send(myfd, url, strlen(url), 0);
+                        } else if(file_size > MAX_SIZE_FILE){
+                            printf("Max File Size Exceeded. Please try again.\n");
+                            logger("Max file size has been exceeded, file not accepted by server.",name);
+                            char *return_msg = "Max File Size Exceeded. Please try again.\n";
+                            returnVal = send(myfd, return_msg, strlen(return_msg), 0);
                         }
                     } else {
                         printf("File Download Error\n");
@@ -307,16 +346,12 @@ void *client(void *arg) {
                 }
             }
         } else if (selectVal == -1) {
-            printf("bob\n");
+            printf("Select() error\n");
         } else {
             printf("Client %s idle for %ld seconds, timeout occurred.\nClosing Connection...\n", name, args->tv.tv_sec);
             logger("Server has timed out due to inactive client connection.",name);
             char *timeout_msg = "Client idle for too long, timeout occurred.\nClosing Connection...\n";
             returnVal = send(myfd, timeout_msg, strlen(timeout_msg), 0);
-            if (returnVal < 0) {
-                printf("Errno from connection with client %s : %s\n", name, strerror(errno));
-                logger("Error from client connection.",name);
-            }
             done = 1;
         }
     }
@@ -488,7 +523,6 @@ int main(int argc, char *argv[]) {
                 releaseConnectionLock();
 
                 int index = clientfd-sockfd-1;
-                printf("IND : %d\n", index);
 
                 strcpy(connections[index],hostname);
                 a[index].fd = clientfd;
