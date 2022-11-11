@@ -164,6 +164,7 @@ int main(int argc, char *argv[]) {
             printf("%s\n", msg_buffer);
 
             char msg_cmp[100] = "Downloading file!\n";
+            char tmout_cmp[100] = "Client idle for too long, timeout occurred.\nClosing Connection...\n";
 
             if (strcmp(msg_buffer, msg_cmp) == 0) {
                 sendFile(buffer, sockfd);
@@ -181,6 +182,8 @@ int main(int argc, char *argv[]) {
                 } else {
                     printf("Error Occurred\n");
                 }
+            } else if (strcmp(msg_buffer, tmout_cmp) == 0) {
+                break;
             } else {
                 printf("Aborting file send.\n");
             }
