@@ -20,7 +20,17 @@ Cited Resources:
 
 Server:
 To run the server.c file, first use the 'make all' command to make the file.
-Then run the command './server' with NO EXTRA arguments.
+Then the to use it run as ./server [-p port] [-t timeout(s)] [-m max_users] [-r number_of_requests] [-s rate_of_requests(s)]
+
+where in :
+-p port is the port of the server
+-t timeout(s) is the time in seconds a client must be idle to timeout
+-m max_users is the maximum connections at a time
+and 
+-r number_of_requests 
+and
+-s rate_of_requests(s)
+is the number of requests a client can make per the time specified in seconds
 
 Client:
 
