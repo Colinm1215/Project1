@@ -85,6 +85,7 @@ char *decode_qr(unsigned int filesize, char file[], int *returnValue) {
     fp = popen(cmd, "r");
     if (fp == NULL) {
         printf("Could not find or open file %s\n", file);
+        logger("Error: unable to find or open file.",NULL);
     }
 
     int parsed_result_flag = 0;
@@ -104,6 +105,7 @@ char *decode_qr(unsigned int filesize, char file[], int *returnValue) {
 
     if (found_url == 0) {
         printf("Could not find URL\n");
+        logger("Error: unable to find URL.",NULL);
         *returnValue = FAILURE;
     }
 
@@ -316,14 +318,17 @@ void *client(void *arg) {
                         if(file_size <= MAX_SIZE_FILE){
                             processing_file = 1;
                             char *return_msg = "Downloading file!\n";
-                            logger("Server has successfully downloaded file from client connection.",name);
+                            logger("Server has successfully downloaded file from client.",name);
                             returnVal = send(myfd, return_msg, strlen(return_msg), 0);
                             printf("Downloading file of size %ld from client %s\n", file_size, name);
+                            logger("Server downloading file from client.",name);
                             char *tmp_filename = process_file(myfd, file_size, args->tv.tv_sec);
                             int val = 0;
                             printf("Processing file from %s\n", name);
+                            logger("Server processing file from client.",name);
                             char *url = decode_qr(file_size, tmp_filename, &val);
                             printf("Sending processed URL %s to client %s\n", url, name);
+                            logger("Server sending processed URL to client.",name);
                             char val_buf[10] = "";
                             sprintf(val_buf,"%d", val);
                             char sz_buf[100] = "";
@@ -347,6 +352,7 @@ void *client(void *arg) {
             }
         } else if (selectVal == -1) {
             printf("Select() error\n");
+            logger("Error with select() function.",name);
         } else {
             printf("Client %s idle for %ld seconds, timeout occurred.\nClosing Connection...\n", name, args->tv.tv_sec);
             logger("Server has timed out due to inactive client connection.",name);
