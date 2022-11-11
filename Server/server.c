@@ -14,7 +14,7 @@
 #define FAILURE 1
 #define TIMEOUT 2
 #define RATEEXCEED 3
-#define MAX_SIZE_FILE 4000
+#define MAX_SIZE_FILE 5000
 
 sem_t log_lock;
 sem_t connection_lock;
@@ -247,10 +247,16 @@ void *client(void *arg) {
                     char *err_str;
                     long file_size = strtol(buffer, &err_str, 10);
                     if (file_size > 0 && strcmp(err_str, "") == 0) {
-                        processing_file = 1;
-                        char *return_msg = "Downloading file!\n";
-                        returnVal = send(myfd, return_msg, strlen(return_msg), 0);
-                        write_file(myfd, file_size);
+                    	if(file_size <= MAX_SIZE_FILE){                    	
+                       processing_file = 1;
+                       char *return_msg = "Downloading file!\n";
+                       returnVal = send(myfd, return_msg, strlen(return_msg), 0);
+                       write_file(myfd, file_size);
+                       } else if(file_size > MAX_SIZE_FILE){
+                       	printf("Max File Size Exceeded. Please try again.\n");
+                        	char *return_msg = "Max File Size Exceeded. Please try again.\n";
+                        	returnVal = send(myfd, return_msg, strlen(return_msg), 0);
+                        }
                     } else {
                         printf("File Download Error\n");
                         char *return_msg = "File Download Error\n";
