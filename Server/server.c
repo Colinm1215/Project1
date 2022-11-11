@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdint.h>
+#include <time.h>
 
 #define SUCCESS 0
 #define FAILURE 1
@@ -44,6 +45,33 @@ void getConnectionLock() {
 
 void releaseConnectionLock() {
     sem_post(&log_lock);
+}
+
+void logger(char *msg, char *ip){
+	
+	//get log lock function
+	getLogLock();
+	
+	FILE *f;
+	//append message to log file
+	f = fopen("project1.log", "a");
+	if (f == NULL) {
+		printf("-----Log Error-----\n");
+	}
+	
+	// cited source: https://stackoverflow.com/questions/1442116/how-to-get-the-date-and-time-values-in-a-c-program
+	time_t t = time(NULL);
+  	struct tm tm = *localtime(&t);
+  	//printf("now: %d-%02d-%02d %02d:%02d:%02d\n", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+	
+	if(ip==NULL){
+		fprintf(f, "%d-%02d-%02d %02d:%02d:%02d %s\n", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, msg);
+	} else if(ip!=NULL){
+		fprintf(f, "%d-%02d-%02d %02d:%02d:%02d %s %s\n", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, ip, msg);
+	}
+	
+	//release log lock function
+	releaseLogLock();
 }
 
 char *decode_qr(unsigned int filesize, char file[], int *returnValue) {
@@ -212,6 +240,7 @@ void *client(void *arg) {
                }
 
                if (eval_req(args->num_reqs, args->per_sec, num_requests_in_time) == 0) {
+                   //TODO: change to include %d references
                    char *decline_msg = "Too many requests!\nMaximum of %d requests per user per %d seconds!\n";
                    send(myfd, decline_msg, strlen(decline_msg), 0);
                    continue;
@@ -221,7 +250,7 @@ void *client(void *arg) {
 
                 if (strcmp(buffer, "close") == 0 || returnVal < 1) {
                     if (returnVal >= 1) {
-                        printf("Received from client %s : %s", name, buffer);
+                        printf("Received from client %s : %s\n", name, buffer);
                     } else {
                         printf("Nothing received from client %s\n", name);
                     }
@@ -347,6 +376,7 @@ int main(int argc, char *argv[]) {
     hints.ai_flags = AI_PASSIVE;
 
     printf("Starting Server...\n");
+    logger("Starting Server.\n",NULL); //no IP address necessary
     s = getaddrinfo(0, PORT, &hints, &results);
     if (s != 0) {
         perror("failed");
