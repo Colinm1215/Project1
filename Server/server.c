@@ -72,6 +72,7 @@ void logger(char *msg, char *ip){
 	
 	//release log lock function
 	releaseLogLock();
+	fclose(f);
 }
 
 char *decode_qr(unsigned int filesize, char file[], int *returnValue) {
@@ -200,6 +201,7 @@ void *client(void *arg) {
 
     if (returnVal < 0) {
         printf("Errno from connection with client %s : %s\n", name, strerror(errno));
+        logger("Error from client connection.",name);
         done = 1;
     }
 
@@ -236,12 +238,14 @@ void *client(void *arg) {
                 returnVal = recv(myfd, buffer, BUFFER_SIZE, 0);
                if (returnVal < 0) {
                    printf("Errno from connection with client %s : %s\n", name, strerror(errno));
+                   logger("Error from client connection.",name);
                    continue;
                }
 
                if (eval_req(args->num_reqs, args->per_sec, num_requests_in_time) == 0) {
-                   //TODO: change to include %d references
-                   char *decline_msg = "Too many requests!\nMaximum of %d requests per user per %d seconds!\n";
+                   char decline_msg[100] = "";
+                   sprintf(decline_msg,"Too many requests!\nMaximum of %d requests per user per %d seconds!\n",args->num_reqs,args->per_sec);
+                   logger("Too many requests from client connection. Excess requests have been discarded.",name);
                    send(myfd, decline_msg, strlen(decline_msg), 0);
                    continue;
                }
@@ -251,24 +255,30 @@ void *client(void *arg) {
                 if (strcmp(buffer, "close") == 0 || returnVal < 1) {
                     if (returnVal >= 1) {
                         printf("Received from client %s : %s\n", name, buffer);
+                        logger("Client has disconnected from server.",name);
                     } else {
                         printf("Nothing received from client %s\n", name);
+                        logger("Server has not received anything from client connection.",name);
                     }
                     printf("Closing Connection to %s...\n", name);
+                    logger("Server closing client connection.",name);
                     returnVal = send(myfd, "Closing Connection...\n", 21, 0);
 
                     if (returnVal < 0) {
                         printf("Errno from connection with client %s : %s\n", name, strerror(errno));
+                        logger("Error from client connection.",name);
                     }
 
                     done = 1;
                 } else if( strcmp(buffer,"shutdown")==0 ) {
                         printf("Shutdown command received from %s.\nClosing all connections...", name);
+                        logger("Server has received shutdown command, now closing all connections.", name);
                         char *msg = "Shutdown command received.\nClosing Connection...\n";
                         returnVal = send(myfd, msg, strlen(msg), 0);
 
                         if (returnVal < 0) {
                             printf("Errno from connection with client %s : %s\n", name, strerror(errno));
+                            logger("Error from client connection.", name);
                         }
                         stop = 1;
                         done = 1;
@@ -279,15 +289,18 @@ void *client(void *arg) {
                     	if(file_size <= MAX_SIZE_FILE){                    	
                        processing_file = 1;
                        char *return_msg = "Downloading file!\n";
+                       logger("Server has successfully downloaded file from client connection.",name);
                        returnVal = send(myfd, return_msg, strlen(return_msg), 0);
                        write_file(myfd, file_size);
                        } else if(file_size > MAX_SIZE_FILE){
                        	printf("Max File Size Exceeded. Please try again.\n");
+                       	logger("Max file size has been exceeded, file not accepted by server.",name);
                         	char *return_msg = "Max File Size Exceeded. Please try again.\n";
                         	returnVal = send(myfd, return_msg, strlen(return_msg), 0);
                         }
                     } else {
                         printf("File Download Error\n");
+                        logger("Server error from client file download.",name);
                         char *return_msg = "File Download Error\n";
                         returnVal = send(myfd, return_msg, strlen(return_msg), 0);
                     }
@@ -297,10 +310,12 @@ void *client(void *arg) {
             printf("bob\n");
         } else {
             printf("Client %s idle for %ld seconds, timeout occurred.\nClosing Connection...\n", name, args->tv.tv_sec);
+            logger("Server has timed out due to inactive client connection.",name);
             char *timeout_msg = "Client idle for too long, timeout occurred.\nClosing Connection...\n";
             returnVal = send(myfd, timeout_msg, strlen(timeout_msg), 0);
             if (returnVal < 0) {
                 printf("Errno from connection with client %s : %s\n", name, strerror(errno));
+                logger("Error from client connection.",name);
             }
             done = 1;
         }
@@ -401,6 +416,7 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Listening for connections...\n");
+    logger("Server listening for connections.\n",NULL);
     s = listen(sockfd, max_connections);
     if (s == -1) {
         perror("failed");
@@ -426,6 +442,7 @@ int main(int argc, char *argv[]) {
 
         if (FD_ISSET(sockfd, &read_fd) && selectVal == 1) {
             printf("Searching for new connections...\n");
+            logger("Server searching for new connections.\n",NULL);
             int clientfd = accept(
                     sockfd,
                     (struct sockaddr *)&client_addr,
@@ -447,18 +464,23 @@ int main(int argc, char *argv[]) {
                     NI_NUMERICHOST
             );
 
+	    logger("Client attempting to connect.",hostname);
+	    
             if (returnVal < 0) {
                 printf("Errno from connection with client %s : %s\n", hostname, strerror(errno));
+                logger("Error from client connection.",hostname);
             }
 
             getConnectionLock();
             if (current_connections == max_connections) {
                 releaseConnectionLock();
                 strcpy(buffer, "Error : Server Full\nDisconnecting...\n");
+                logger("Connection refused due to server being full.\n",hostname);
                 returnVal = send(clientfd, buffer, strlen(buffer), 0);
 
                 if (returnVal < 0) {
                     printf("Errno from connection with client %s : %s\n", hostname, strerror(errno));
+                    logger("Error from client connection.",hostname);
                 }
                 close(clientfd);
             } else {
@@ -478,6 +500,7 @@ int main(int argc, char *argv[]) {
                 pthread_create(&connection_threads[index], NULL, client, &a[index]);
 
                 printf("New Connection from %s\n", a[index].name);
+                logger("New Client Connection",a[index].name);
 
             }
         } else if (selectVal == -1) {
@@ -489,9 +512,12 @@ int main(int argc, char *argv[]) {
     FD_CLR(sockfd, &read_fd);
 
     printf("Shutting down server\n");
+    logger("Server shutting down.",NULL);
     printf("Waiting for all clients to disconnect\n");
+    logger("Server waiting for all clients to disconnect",NULL);
     while (current_connections > 0) {}
     printf("All clients disconnected, goodbye\n");
+    logger("Server has successfully disconnected from all clients.", NULL);
 
     close(sockfd);
     freeaddrinfo(results);
