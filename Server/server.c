@@ -336,6 +336,7 @@ void *client(void *arg) {
                             returnVal = send(myfd, val_buf, 10, 0);
                             returnVal = send(myfd, sz_buf, 100, 0);
                             returnVal = send(myfd, url, strlen(url), 0);
+			    remove(tmp_filename);
                         } else if(file_size > MAX_SIZE_FILE){
                             printf("Max File Size Exceeded. Please try again.\n");
                             logger("Max file size has been exceeded, file not accepted by server.",name);
